@@ -1,0 +1,20 @@
+#setting of the directory 
+setwd("/Users/sukritmahajan/Desktop/RNA_Seq_Analysis")
+
+#loading dataset onto RStudio for further processing
+data <- read.csv("/Users/sukritmahajan/downloads/R/DESeq_res_G4_APX_OAPX.csv")
+
+#Development of plot 
+
+install.packages(ggplot2)
+library(ggplot2)
+
+#Plotting of plot with color = pvalue 
+myplot1 <- ggplot(data, aes(x = log(baseMean), y = log2FoldChange, color=pvalue)) 
+p2 <- myplot1 + geom_point(size = 0.1) + ggtitle ("Assigning color using pvalue") 
+
+#Read p2
+p2
+
+Note to self
+Warning message: Removed 2650 rows containing missing values (geom_point).
