@@ -1,0 +1,471 @@
+#set directory 
+setwd("/Users/sukritmahajan/Desktop/RNA_Seq_Analysis")
+getwd()
+
+#load packages required for analysis and visualization
+library(ggplot2)
+library(cowplot) 
+library(plotly)
+library(dplyr)   #used primarily for filtering the dataset 
+library(GenomicRanges) #converting dataset into GRanges object 
+library(ChIPseeker) # for annotation
+library(ChIPpeakAnno) # for annotation, better than detailRanges
+library(clusterProfiler) 
+library(org.Hs.eg.db)
+library(IRanges)
+library(limma)
+library(GenomicAlignments)
+library(GenomicFeatures)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+#load repeat masker on R 
+load("~/Desktop/RNA_Seq_Analysis/repdb_UCSC.Rdata")
+
+#import dataset
+df <- read.csv("DESeq_res_OAP_IP_X_vs_AP_IP_X_repfilt_plus1norm.csv", header=TRUE)
+
+#check if the dataset has been imported properly
+head(df)
+str(df)
+
+#Plotting the filtered dataset 
+plot_df <- ggplot(df, aes(x=log10(baseMean), y=log2FoldChange, 
+           color=pvalue <0.05)) + geom_point(size=0.001) + theme_cowplot(12)
+plot_df + ggtitle("Total G-quadruplexes")
+
+#data.frame to GRanges for filtered data
+
+df.gr <- GRanges(X=c(df$X),name=c(df$name),seqnames=c(df$seqnames),
+                          ranges=IRanges(start=c(df$start),
+                                         end=c(df$end)),
+                          strand=c(df$strand), score=c(df$score), baseMean=c(df$baseMean), 
+                          log2FoldChange=c(df$log2FoldChange), pvalue=c(df$pvalue)
+)
+df.gr
+
+#Filter the dataset on the basis of positive and negative log2FoldChange values
+df.pos<- filter(df, log2FoldChange > 0 & pvalue < 0.05 & baseMean > 100)
+
+#Viewing the new dataset based on the filtration by log2FoldChange
+head(df.pos)
+str(df.pos)
+
+#Plotting of damaged G4s based on the filtration by log2FoldChange > 0
+plot_df.pos <- ggplot(df.pos, aes(x=log10(baseMean), y=log2FoldChange, color=pvalue)) + 
+  geom_point(size=0.001) + theme_cowplot(12) 
+plot_df.pos + ggtitle("Damaged G-quadruplexes")
+
+#Conversion of damaged and undamaged G4 dataset into GRanges 
+df.pos.gr <- GRanges(X=c(df.pos$X),name=c(df.pos$name),seqnames=c(df.pos$seqnames),
+                     ranges=IRanges(start=c(df.pos$start),
+                                    end=c(df.pos$end)),
+                     strand=c(df.pos$strand), score=c(df.pos$score), baseMean=c(df.pos$baseMean), 
+                     log2FoldChange=c(df.pos$log2FoldChange), pvalue=c(df.pos$pvalue)
+)
+df.pos.gr
+
+#Checking for overlaps of damaged and total G4s with exons and introns using ChIPSeeker 
+#Assigning hg19 genome for reference
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+#For all G-quadruplexes 
+df.anno <- annotatePeak(df.gr, tssRegion = c(-1000,1000), TxDb = txdb,
+                        annoDb = "org.Hs.eg.db")
+df.anno
+
+#For Damaged G4s (Log2FoldChange > 0)
+df.pos.anno <- annotatePeak(df.pos.gr, tssRegion = c(-1000,1000), TxDb = txdb,
+                            annoDb = "org.Hs.eg.db")
+df.pos.anno
+
+plotAnnoPie(df.anno)
+plotAnnoPie(df.pos.anno)
+
+#########################################################################################################
+
+#Strand position of the G4s
+
+#Dividing total G4s into sense and anti-sense strand relative to transcription
+
+Sense_total <- filter(data.frame(df.anno), geneStrand == "1" & strand == "+" | geneStrand == "2" & strand == "-")
+Anti_total <- filter(data.frame(df.anno), geneStrand == "1" & strand == "-" | geneStrand == "2" & strand == "+")
+
+df_sense.gr <- toGRanges(Sense_total)
+df_anti.gr <- toGRanges(Anti_total)
+
+#Damage G4s from sense and antisense strand 
+
+Sense_damage <- filter(data.frame(df.pos.anno), geneStrand == "1" & strand == "+" | geneStrand == "2" & strand == "-")
+Anti_damage <- filter(data.frame(df.pos.anno), geneStrand == "1" & strand == "-" | geneStrand == "2" & strand == "+")
+
+Sense.damage.gr <- toGRanges(Sense_damage)
+Anti.damage.gr <- toGRanges(Anti_damage)
+
+#Plotting of sense and antisense G4s of total vs damaged
+
+leng_damage_sense <- length(Sense_damage$geneStrand)
+leng_damage_anti <- length(Anti_damage$geneStrand)
+
+leng_total_sense <- length(Sense_total$geneStrand)
+leng_total_anti <- length(Anti_total$geneStrand)
+
+plot_G4_Strand <- barplot(c(leng_damage_sense,leng_total_sense,leng_damage_anti, leng_total_anti), 
+                          col=c("blue","red","green", "black"), main="G4s position relative to gene transcription", ylim=c(0,125000), 
+                          names.arg = c("Damaged Sense", "Total Sense", "Damaged Antisense","Total Antisense"), xpd=TRUE)  
+
+#Proportion of damaged G4s sense and antisense to the gene 
+
+proportion_damage_sense <- c(leng_damage_sense/leng_total_sense)
+proportion_damage_anti <- c(leng_damage_anti/leng_total_anti)
+
+plot_damage_strand <- barplot(c(proportion_damage_sense,proportion_damage_anti), 
+                              col=c("blue","green"), main="Damaged G4s relative to gene transcription", ylim=c(0,1), 
+                              names.arg = c("Damaged Sense", "Damaged Antisense"), xpd=TRUE)  
+
+#########################################################################################################################
+
+plot_total_strand <- barplot(c(leng_total_sense,leng_total_anti), 
+                             col=c("red","black"), main="Total G4s relative to gene transcription", ylim=c(0,120000), 
+                             names.arg = c("Total Sense", "Total Antisense"), xpd=TRUE) 
+
+#########################################################################################################################
+
+#Checking for G4s overlapping gene body 
+Gene_G4_total <- filter(data.frame(df.anno), annotation != "Distal Intergenic" & 
+                          annotation != "Downstream (1-2kb)" & annotation != "Downstream (<1kb)" & annotation != "Downstream (2-3kb)")
+
+Gene_G4_damaged <- filter(data.frame(df.pos.anno), annotation != "Distal Intergenic" & 
+                            annotation != "Downstream (1-2kb)" & annotation != "Downstream (<1kb)" & annotation != "Downstream (2-3kb)")
+
+length_gene_total <- length(Gene_G4_total$annotation)
+length_gene_damaged <- length(Gene_G4_damaged$annotation)  
+
+#G4s overlapping genes in sense and antisense direction
+Gene_G4_total_sense <- filter(Gene_G4_total, geneStrand == "1" & strand == "+" | geneStrand == "2" & strand == "-" )
+Gene_G4_total_anti <- filter(Gene_G4_total, geneStrand == "1" & strand == "-" | geneStrand == "2" & strand == "+" )
+
+Gene_G4_damaged_sense <- filter(Gene_G4_damaged, geneStrand == "1" & strand == "+" | geneStrand == "2" & strand == "-" )
+Gene_G4_damaged_anti <- filter(Gene_G4_damaged, geneStrand == "1" & strand == "-" | geneStrand == "2" & strand == "+" )
+
+length_Gene_G4_total_sense <- length(Gene_G4_total_sense$annotation)
+length_Gene_G4_total_anti <- length(Gene_G4_total_anti$annotation)
+length_Gene_G4_damaged_sense <- length(Gene_G4_damaged_sense$annotation)
+length_Gene_G4_damaged_anti <- length(Gene_G4_damaged_anti$annotation)
+
+#Plotting G4s that overlap gene body
+Plot_Gene_G4 <- barplot(c(length_gene_total,length_gene_damaged), 
+                        col=c("red", "black"), main="Total vs Damaged G4s overlapping gene body", ylim=c(0,150000), 
+                        names.arg = c("Total G4s", "Damaged G4s"), xpd=TRUE)  
+
+#Plotting G4s in gene body in sense and antisense direction
+Plot_G4_Gene_Body <- barplot(c(length_Gene_G4_damaged_sense, length_Gene_G4_total_sense, length_Gene_G4_damaged_anti,length_Gene_G4_total_anti), 
+                             col=c("blue", "red","green","black"), main="G4s overlapping gene body", ylim=c(0,80000), 
+                             names.arg = c("Damaged Sense", "Total Sense", "Damaged Anti", "Total Anti"), xpd=TRUE)  
+
+#Plotting Total G4s that overlap gene body in sense and antisense direction
+Plot_G4_Total_Gene <- barplot(c(length_Gene_G4_total_sense, length_Gene_G4_total_anti), 
+                              col=c("red","black"), main="Total G4s overlapping gene body", ylim=c(0,75000), 
+                              names.arg = c("Total Sense", "Total Anti"), xpd=TRUE)  
+
+damage_sense <- (length_Gene_G4_damaged_sense/length_Gene_G4_total_sense)  
+damage_anti <- (length_Gene_G4_damaged_anti/length_Gene_G4_total_anti)
+
+#Plotting Damaged G4s that overlap gene body in sense and antisense direction
+Plot_G4_Damage_Gene <- barplot(c(damage_sense, damage_anti), 
+                               col=c("blue","green"), main="Damaged G4s overlapping gene body", ylim=c(0,1), 
+                               names.arg = c("Damaged Sense", "Damaged Anti"), xpd=TRUE)  
+
+#########################################################################################################################
+
+############Start of annotation of G4s relative to promoters##############
+
+#Checking for G4s overlapping promoter of genes 
+Promoter_total <- filter(data.frame(df.anno), annotation == "Promoter")
+Promoter_damaged <- filter(data.frame(df.pos.anno), annotation == "Promoter")
+length_promoter_total <- length(Promoter_total$annotation)
+length_promoter_damaged <- length(Promoter_damaged$annotation)  
+
+Plot_G4_Promoter <- barplot(c(length_promoter_total,length_promoter_damaged), 
+                            col=c("blue","red"), main="G4s at promoter of genes", ylim=c(0,40000), 
+                            names.arg = c("Total G4s", "Damaged G4s"), xpd=TRUE)  
+
+#G4s at promoter sense or antisense relative to the gene 
+Promoter_total_sense <- filter(Promoter_total, geneStrand == "1" & strand == "+" | geneStrand == "2" & strand == "-" )
+Promoter_total_anti <- filter(Promoter_total, geneStrand == "1" & strand == "-" | geneStrand == "2" & strand == "+" )
+
+Promoter_damage_sense <- filter(Promoter_damaged, geneStrand == "1" & strand == "+" | geneStrand == "2" & strand == "-")
+Promoter_damage_anti <- filter(Promoter_damaged, geneStrand == "1" & strand == "-" | geneStrand == "2" & strand == "+" )
+
+#Counting the number of G4s at the promoter region Sense or Antisense 
+length_promoter_total_sense <- length(Promoter_total_sense$annotation)
+length_promoter_total_anti <- length(Promoter_total_anti$annotation)
+length_promoter_damage_sense <- length(Promoter_damage_sense$annotation)
+length_promoter_damage_anti <- length(Promoter_damage_anti$annotation)
+
+#Plotting of G4s (Total vs Damaged) at the promoter region relative to the transcription of the gene  
+plot_Promoter_G4_Position <- barplot(c(length_promoter_damage_sense,length_promoter_total_sense,length_promoter_damage_anti,length_promoter_total_anti), 
+                                     col=c("blue","red","green", "black"), main="G4s overlapping gene promoters", ylim=c(0,25000), 
+                                     names.arg = c("Damaged Sense", "Total Sense", "Damaged Antisense","Total Antisense"), xpd=TRUE)  
+
+#Plotting of Total G4s at the promoter region relative to the transcription of the gene  
+plot_Promoter_Total_G4_Position <- barplot(c(length_promoter_total_sense,length_promoter_total_anti), 
+                                           col=c("red","black"), main="Total G4s relative to gene promoters", ylim=c(0,20000), 
+                                           names.arg = c("Total Sense", "Total Antisense"), xpd=TRUE)  
+
+#Plotting of proportion of damaged G4s at the promoter region relative to the transcription of the gene  
+
+prop_promoter_damaged_sense <- c(length_promoter_damage_sense/length_promoter_total_sense)
+prop_promoter_damaged_anti <- c(length_promoter_damage_anti/length_promoter_total_anti) 
+
+plot_Promoter_Damaged_G4_Position <- barplot(c(prop_promoter_damaged_sense, prop_promoter_damaged_anti), 
+                                             col=c("blue","green"), main="Damaged G4s overlapping gene promoters", ylim=c(0,1), 
+                                             names.arg = c("Damaged Sense", "Damaged Antisense"), xpd=TRUE) 
+
+############End of annotation of G4s relative to promoters##############
+
+#########################################################################################################################
+
+##################################Length of G-quadruplexes in the genome########################################
+
+#Length of G4s across the genome
+
+hist(data.frame(df.anno)$width, xlim = c(15,75), ylim = c(0,70000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total G4s in the genome")
+
+hist(data.frame(df.pos.anno)$width, xlim = c(15,75), ylim = c(0,10000), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s in the genome")
+
+plotDensities(Gene_G4_total$width, xlab = "Length of G-quadruplexes", 
+              main = "Length of total G4s at Gene Promoters")
+
+plotDensities(Gene_G4_damaged$width, xlab = "Length of G-quadruplexes", 
+              main = "Length of damaged G4s at Gene Promoters")
+
+#Length of G4s overlapping gene body
+
+hist(Gene_G4_total$width, xlim = c(15,75), ylim = c(0,50000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total G4s overlapping gene body")
+
+hist(Gene_G4_damaged$width, xlim = c(15,75), ylim = c(0,6000), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s overlapping gene body")
+
+plotDensities(Gene_G4_total$width, xlab = "Length of G-quadruplexes", 
+              main = "Length of total G4s overlapping gene body ")
+
+plotDensities(Gene_G4_damaged$width, xlab = "Length of G-quadruplexes", 
+              main = "Length of damaged G4s overlapping gene body")
+
+hist(Gene_G4_total_sense$width, xlim = c(15,75), ylim = c(0,25000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total G4s sense to gene body")
+
+hist(Gene_G4_total_anti$width, xlim = c(15,75), ylim = c(0,25000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total G4s antisense to gene body")
+
+hist(Gene_G4_damaged_sense$width, xlim = c(15,75), ylim = c(0,3500), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s sense to gene body")
+
+hist(Gene_G4_damaged_anti$width, xlim = c(15,75), ylim = c(0,3500), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s antisense to gene body")
+
+#Length of G4s at the promoter 
+
+hist(Promoter_total$width, xlim = c(15,75), ylim = c(0,12000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total G4s at Promoters")
+
+hist(Promoter_damaged$width, xlim = c(15,75), ylim = c(0,1200), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s at Promoters")
+
+plotDensities(Promoter_total$width, xlab = "Length of G-quadruplexes", 
+              main = "Length of total G4s at Promoters")
+
+plotDensities(Promoter_damaged$width, xlab = "Length of G-quadruplexes", 
+              main = "Length of damaged G4s at Promoters")
+
+hist(Promoter_total_sense$width, xlim = c(15,75), ylim = c(0,7000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total sense G4s sense to gene promoter")
+
+hist(Promoter_total_anti$width, xlim = c(15,75), ylim = c(0,7000), xlab = "Length of G-quadruplexes", 
+     main = "Length of total G4s antisense to gene promoter")
+
+hist(Promoter_damage_sense$width, xlim = c(15,75), ylim = c(0,800), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s sense to gene promoter")
+
+hist(Promoter_damage_anti$width, xlim = c(15,75), ylim = c(0,800), xlab = "Length of G-quadruplexes", 
+     main = "Length of damaged G4s antisense to gene promoter")
+
+#########################################The next few lines of code below should be ignored################################
+#Length of Total G4s 
+total_short_G4 <- filter (df, width > 14 & width <30)
+total_medium_G4 <- filter (df, width > 30 & width <65)
+total_long_G4 <- filter (df, width > 65 )
+
+length_total_short <- length (total_short_G4$width)
+length_total_medium <- length (total_medium_G4$width)
+length_total_long <- length (total_long_G4$width)
+
+plot_G4_total_length <- barplot(c(length_total_short,length_total_medium,length_total_long), col=c("blue","red","green"), 
+                  main ="Length of Total G4s", ylim=c(0,150000), 
+                  names.arg = c("15-30", "31-65", ">65"), xpd=TRUE) 
+
+#Length of damaged G4s 
+
+damaged_short_total <- filter (df.pos, width > 14 & width <30)
+damaged_medium_total <- filter (df.pos, width > 30 & width <65)
+damaged_long_total <- filter (df.pos, width > 65 )
+
+length_damaged_short <- length (damaged_short_total$width)
+length_damaged_medium <- length (damaged_medium_total$width)
+length_damaged_long <- length (damaged_long_total$width)
+
+plot_G4_damaged_length <- barplot(c(length_damaged_short,length_damaged_medium,length_damaged_long), col=c("blue","red","green"), 
+                          main ="Length of Total G4s", ylim=c(0,20000), names.arg = c("15-30", "31-65", ">65"), xpd=TRUE) 
+
+#Length of G4s at the promoter
+
+#Length of Total G4s at the promoter
+promoter_short_total <- filter (Promoter_total, width > 14 & width <30)
+promoter_medium_total <- filter (Promoter_total, width > 30 & width < 61)
+promoter_long_total <- filter (Promoter_total, width > 60 )
+
+promoter_length_total_short <- length (promoter_short_total$width)
+promoter_length_total_medium <- length (promoter_medium_total$width)
+promoter_length_total_long <- length (promoter_long_total$width)
+
+plot_promoter_G4_total_length <- barplot(c(promoter_length_total_short,promoter_length_total_medium,promoter_length_total_long), 
+                                 col=c("blue","red","green"), main ="Length of Total G4s", ylim=c(0,25000), 
+                                names.arg = c("15-30", "30-60", ">60"), xpd=TRUE) 
+
+#Length of damaged G4s at the promoter
+promoter_short_total <- filter (Promoter_damaged, width > 14 & width <30)
+promoter_medium_total <- filter (Promoter_damaged, width > 30 & width <61 )
+promoter_long_total <- filter (Promoter_damaged, width > 60 )
+
+length_damaged_short <- length (promoter_short_total$width)
+length_damaged_medium <- length (promoter_medium_total$width)
+length_damaged_long <- length (promoter_long_total$width)
+
+hist(Promoter_damaged$width, xlim = c(15,100), ylim = c(0,1200), xlab = "Length of G-quadruplexes", main = "Length of Damaged G4s at Promoters")
+
+
+plot_G4_damaged_length <- barplot(c(length_damaged_short,length_damaged_medium,length_damaged_long), col=c("blue","red","green"), 
+                                  main ="Length of Damaged G4s", ylim=c(0,3000), names.arg = c("15-30", "30-60", ">60"), xpd=TRUE) 
+
+##################################################################################################################################
+
+#Find GC% in the G-quadruplexes 
+Base_content_total <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, df.gr), baseOnly=T, as.prob=F)
+Base_content_damaged <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, df.pos.gr), baseOnly=T, as.prob=F)
+Base_content_total_sense <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, df_sense.gr), baseOnly=T, as.prob=F)
+Base_content_total_anti <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, df_anti.gr), baseOnly=T, as.prob=F)
+Base_content_damaged_sense <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19,Sense.damage.gr), baseOnly=T, as.prob=F)
+Base_content_damaged_anti <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19,Anti.damage.gr), baseOnly=T, as.prob=F)
+Base_content_promoter_total <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, toGRanges(Promoter_total)), baseOnly=T, as.prob=F)
+Base_content_promoter_damaged <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, toGRanges(Promoter_damaged)), baseOnly=T, as.prob=F)
+Base_content_gene_total <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, toGRanges(Gene_G4_total)), baseOnly=T, as.prob=F)
+Base_content_gene_damaged <- alphabetFrequency(getSeq(BSgenome.Hsapiens.UCSC.hg19, toGRanges(Gene_G4_damaged)), baseOnly=T, as.prob=F)
+
+#Sum for G+C columns
+G_content_total <- rowSums(data.frame(Base_content_total[,3]))
+G_content_damaged <- rowSums(data.frame(Base_content_damaged[,3]))
+G_content_total_sense <- rowSums(data.frame(Base_content_total_sense[,3]))
+G_content_total_anti <- rowSums(data.frame(Base_content_total_anti[,3]))
+G_content_damaged_sense <- rowSums(data.frame(Base_content_damaged_sense[,c(3)]))
+G_content_damaged_anti <- rowSums(data.frame(Base_content_damaged_anti[,c(3)]))
+G_content_promoter_total <- rowSums(data.frame(Base_content_promoter_total[,c(3)]))
+G_content_promoter_damaged <- rowSums(data.frame(Base_content_promoter_damaged[,c(3)]))
+G_content_gene_total <- rowSums(data.frame(Base_content_gene_total[,c(3)]))
+G_content_gene_damaged <- rowSums(data.frame(Base_content_gene_damaged[,c(3)]))
+
+hist(G_content_total, xlim = c(10,40), nclass = 200, ylim = c(0,30000), main = 'Guanine content in total G-quadruplexes')
+hist(G_content_damaged,xlim = c(10,40),nclass = 200, main = 'Guanine content damaged G-quadruplexes')
+hist(G_content_total_sense, xlim = c(10,40), nclass = 300, ylim = c(0,14000), main = 'Guanine content in total G-quadruplexes in sense')
+hist(G_content_total_anti, xlim = c(10,40), nclass = 200, ylim = c(0,14000), main = 'Guanine content in damaged G-quadruplexes in anti')
+hist(G_content_damaged_sense, xlim = c(10,40), nclass = 300, ylim = c(0,2000), main = 'Guanine content in damage G-quadruplexes in sense')
+hist(G_content_damaged_anti, xlim = c(10,40), nclass = 300, ylim = c(0,2000), main = 'Guanine content in damage G-quadruplexes in anti')
+hist(G_content_gene_total,  xlim = c(10,40), nclass = 300, ylim = c(0,20000), main = 'Guanine content in total G-quadruplexes in gene body')
+hist(G_content_gene_damaged, xlim = c(10,40), nclass = 300, ylim = c(0,2500), main = 'Guanine content in total G-quadruplexes in gene body')
+hist(G_content_promoter_total, xlim = c(10,40), nclass = 300, ylim = c(0,5000), main = 'Guanine content in total G-quadruplexes in promoter')
+hist(G_content_promoter_damaged,  xlim = c(10,40), nclass = 300, ylim = c(0,500), main = 'Guanine content in damage G-quadruplexes in promoter')
+                                              
+#Using Annotatr for checking for chromatin marks overlapping G4s 
+
+H3K4me3_codes <- c('Hepg2' = 'AH23311')
+build_ah_annots(genome = hg19, ah_codes = H3K4me3_codes, annotation_class = 'H3K4me3')
+ah_names <- c('hg19_H3K4me3_Hepg2')
+print(annotatr_cache$get('hg19_H3K4me3_Hepg2'))
+
+annots <- c('hg19_chromatin_Hepg2-StrongEnhancer', 'hg19_chromatin_Hepg2-WeakEnhancer', 'hg19_chromatin_Hepg2-Heterochrom/lo', 
+             'hg19_chromatin_Hepg2-Repressed', 'hg19_H3K4me3_Hepg2', 'hg19_chromatin_Hepg2-Insulator')
+annots_order <- c('hg19_chromatin_Hepg2-StrongEnhancer', 'hg19_chromatin_Hepg2-WeakEnhancer', 'hg19_chromatin_Hepg2-Heterochrom/lo', 
+                  'hg19_chromatin_Hepg2-Repressed', 'hg19_H3K4me3_Hepg2', 'hg19_chromatin_Hepg2-Insulator')
+annotations <- build_annotations(genome = 'hg19', annotations = annots)
+
+annotated_regions_total <- annotate_regions(regions = df.gr, annotations = annotations,
+                          ignore.strand = FALSE, quiet = FALSE)
+
+annotated_regions_damage <- annotate_regions(regions = df.pos.gr, annotations = annotations,
+                                           ignore.strand = FALSE, quiet = FALSE)
+
+summarize_total <- summarize_annotations(annotated_regions = annotated_regions_total, quiet = TRUE)
+summarize_damage <- summarize_annotations(annotated_regions = annotated_regions_damage, quiet = TRUE)
+
+annot_type_total <- summarize_categorical(annotated_regions = annotated_regions_total, by = c('annot.type', 'annot.id'), quiet = TRUE)
+annot_type_damage <- summarize_categorical(annotated_regions = annotated_regions_damage, by = c('annot.type', 'annot.id'), quiet = TRUE)
+
+#Plotting of annotated regions for enhancer and heterochromatin regions
+plot_annotation(annotated_regions_total, annotation_order = annots_order, x_label = 'Genomic Location', plot_title = 'Predicted genomic location of total G4s')
+plot_annotation(annotated_regions_damage,annotation_order = annots_order, x_label = 'Genomic Location', plot_title = 'Predicted genomic location of damaged G4s')
+
+#Annotating intergenic G4s for enhancer and repressor functions 
+Intergenic_G4_total <- filter(data.frame(df.anno), annotation == "Distal Intergenic" | 
+                                annotation == "Downstream (1-2kb)" | annotation == "Downstream (<1kb)" | annotation == "Downstream (2-3kb)")
+
+Intergenic_G4_damage <- filter(data.frame(df.pos.anno), annotation == "Distal Intergenic" | 
+                                 annotation == "Downstream (1-2kb)" | annotation == "Downstream (<1kb)" | annotation == "Downstream (2-3kb)")
+
+Intergenic_G4_total.gr <- toGRanges(Intergenic_G4_total)
+Intergenic_G4_damage.gr <- toGRanges(Intergenic_G4_damage)
+
+Intergenic_annotation_total <- annotate_regions(regions = Intergenic_G4_total.gr, annotations = annotations,
+                                            ignore.strand = FALSE, quiet = FALSE)
+
+Intergenic_annotation_damage <- annotate_regions(regions = Intergenic_G4_damage.gr, annotations = annotations,
+                                             ignore.strand = FALSE, quiet = FALSE)
+
+intergenic_summarize_total <- summarize_annotations(annotated_regions = Intergenic_annotation_total, quiet = TRUE)
+summarize_damage <- summarize_annotations(annotated_regions = Intergenic_annotation_damage, quiet = TRUE)
+
+intergenic_categorize_total <- summarize_categorical(annotated_regions = Intergenic_annotation_total, by = c('annot.type', 'annot.id'), quiet = TRUE)
+intergenic_categorize_damage<- summarize_categorical(annotated_regions = Intergenic_annotation_damage, by = c('annot.type', 'annot.id'), quiet = TRUE)
+
+plot_annotation(Intergenic_annotation_total, annotation_order = annots_order, x_label = 'Genomic Location', plot_title = 'Genomic Fate of Total G4s in Intergenic Region')
+plot_annotation(Intergenic_annotation_damage, annotation_order = annots_order, x_label = 'Genomic Location', plot_title = 'Genomic Fate of Damaged G4s in Intergenic Region')
+
+#Annotating CpG Island for Total and Damaged G4s and in intergenic regions
+
+annots_cpg <- c('hg19_cpg_islands', 'hg19_cpg_shelves', 'hg19_cpg_shores', 'hg19_cpg_inter')
+
+annots_cpg_order <- c('hg19_cpg_islands', 'hg19_cpg_shelves', 'hg19_cpg_shores', 'hg19_cpg_inter')
+
+annotations.cpg <- build_annotations(genome = 'hg19', annotations = annots_cpg)
+
+annotated_cpg_total <- annotate_regions(regions = df.gr, annotations = annotations.cpg,
+                                            ignore.strand = FALSE, quiet = FALSE)
+
+annotated_cpg_damage <- annotate_regions(regions = df.pos.gr, annotations = annotations.cpg,
+                                             ignore.strand = FALSE, quiet = FALSE)
+
+Intergenic_cpg_total <- annotate_regions(regions = Intergenic_G4_total.gr, annotations = annotations.cpg,
+                                                ignore.strand = FALSE, quiet = FALSE)
+
+Intergenic_cpg_damage <- annotate_regions(regions = Intergenic_G4_damage.gr, annotations = annotations.cpg,
+                                                 ignore.strand = FALSE, quiet = FALSE)
+
+#Plotting CpG annotations for total and damaged G4s 
+
+plot_annotation(annotated_cpg_total, annotation_order = annots_cpg_order, x_label = 'CpG Annotation', plot_title = 'Total G4s overlapping CpGs')
+plot_annotation(annotated_cpg_damage,annotation_order = annots_cpg_order, x_label = 'CpG Annotation', plot_title = 'Damaged G4s overlapping CpGs')
+
+
+plot_annotation(Intergenic_cpg_total, annotation_order = annots_cpg_order, x_label = 'CpG Annotation', plot_title = 'Total G4s overlapping CpGs in Intergenic Region')
+plot_annotation(Intergenic_cpg_damage, annotation_order = annots_cpg_order, x_label = 'CpG Annotation', plot_title = 'Damaged G4s overlapping CpGs in Intergenic Region')
